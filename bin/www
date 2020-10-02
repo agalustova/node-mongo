@@ -1,0 +1,51 @@
+#!/usr/bin/env node
+if (process.env.APP_ENV !== 'heroku') {
+  /* eslint-disable-next-line */
+  const env = require('dotenv').config();
+
+  if (env.error) {
+    throw new Error(env.error.stack || env.message || env.error);
+  }
+}
+
+const cluster = require('cluster');
+const CPUs = require('os').cpus().length;
+const http = require('http');
+
+const app = require('../app');
+const { log } = require('../services/utilities');
+const { ENV, ENVS, PORT } = require('../config');
+
+app.set('port', PORT);
+const server = http.createServer(app);
+
+// clustering
+if (cluster.isMaster) {
+  for (let i = 0; i < CPUs; i += 1) {
+    cluster.fork({ workerId: i });
+  }
+
+  cluster.on('exit', ({ workerId = null }) => cluster.fork(workerId ? { workerId } : {}));
+  log(`Running on port ${PORT} [${ENV.toUpperCase()}], workers: ${CPUs}`);
+} else {
+  // run the server
+  server.listen((ENV === ENVS.heroku && process.env.PORT) || PORT);
+  server.on('error', (error) => {
+    if (error.syscall !== 'listen') {
+      throw error;
+    }
+
+    switch (error.code) {
+      case 'EACCES':
+        log(`${PORT} requires elevated privileges`);
+        return process.exit(1);
+      case 'EADDRINUSE':
+        log(`${PORT} is already in use`);
+        return process.exit(1);
+      default:
+        throw error;
+    }
+  });
+}
+
+module.exports = server;
